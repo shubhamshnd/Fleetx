@@ -1,0 +1,60 @@
+{
+  "buildings": [
+    {
+      "id": "SS2",
+      "name": "Building SS2",
+      "latitude": 17.303754, 
+      "longitude": 73.211614,
+      "type": "warehouse"
+    },
+    {
+      "id": "SS1",
+      "name": "Building SS1",
+      "latitude": 17.303197213154174,
+      "longitude": 73.21168443889928,
+      "type": "office"
+    },
+    {
+      "id": "SS4",
+      "name": "Building SS4",
+      "latitude":  17.298509, 
+      "longitude": 73.207833,
+      "type": "depot"
+    },
+    {
+      "id": "SAFE_OFFICE",
+      "name": "Safety Office",
+      "latitude": 17.296681, 
+      "longitude": 73.206330,
+      "type": "safety"
+    },
+    {
+      "id": "STORE",
+      "name": "Store",
+      "latitude":17.298829, 
+      "longitude": 73.206285,
+      "type": "store"
+    },
+    {
+      "id": "CG",
+      "name": "CG",
+      "latitude": 17.296618408923322,
+      "longitude": 73.20445906056527,
+      "type": "control"
+    },
+    {
+      "id": "GATE",
+      "name": "Main Gate",
+      "latitude": 17.29644113012961,
+      "longitude": 73.21624368159706,
+      "type": "gate"
+    },
+    {
+      "id": "PRE_GATE",
+      "name": "Pre Gate",
+      "latitude": 17.290950569085553,
+      "longitude": 73.21679409967035,
+      "type": "gate"
+    }
+  ]
+}

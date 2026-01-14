@@ -31,20 +31,71 @@
         ::-webkit-scrollbar-thumb { background: #888; border-radius: 2px; }
 
         {% block extra_styles %}{% endblock %}
+        /* Building label styling */
+/* Remove default Leaflet tooltip box */
+.leaflet-tooltip {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+}
+
+/* Remove tooltip arrow */
+.leaflet-tooltip::before {
+    display: none !important;
+}
+
+/* Your label text styling */
+.building-label-tooltip {
+    color: #8f9daa;
+    font-size: 10px;
+    font-weight: 650;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+/* Marker container */
+.building-label-marker {
+    background: transparent !important;
+    border: none !important;
+}
+
+.building-label-marker {
+    transform: translate(-50%, -50%);
+}
+
+.building-label-tooltip {
+    position: relative;
+}
+
+/* automatic spreading */
+.building-label-tooltip:nth-child(1) { transform: translate(0, -14px); }
+.building-label-tooltip:nth-child(2) { transform: translate(14px, 0); }
+.building-label-tooltip:nth-child(3) { transform: translate(-14px, 0); }
+.building-label-tooltip:nth-child(4) { transform: translate(0, 14px); }
+
     </style>
 </head>
 <body class="bg-white font-sans antialiased">
-    <!-- Top Navigation Bar -->
+    <!-- Top Navigation Bar - Only visible when logged in -->
+    {% if session.logged_in %}
     <nav class="fixed top-0 left-0 right-0 z-[1000] flex items-center justify-between px-4 py-3 bg-white/90 backdrop-blur-sm border-b border-gray-100">
         <div class="flex items-center gap-4">
             <h1 class="text-lg font-semibold text-gray-900 tracking-tight">JSW Jaigarh Port</h1>
             <div class="h-4 w-px bg-gray-200"></div>
             {% block nav_items %}{% endblock %}
+            {% if session.role == 'admin' %}
+            <a href="{{ url_for('admin_dashboard') }}" class="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors">
+                Admin
+            </a>
+            {% endif %}
         </div>
         <div class="flex items-center gap-6">
             {% block nav_status %}{% endblock %}
         </div>
     </nav>
+    {% endif %}
 
     {% block content %}{% endblock %}
 

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Access Denied - FleetX</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100vw; height: 100vh; }
+    </style>
+</head>
+<body class="bg-gray-50 font-sans antialiased">
+    <div class="min-h-screen flex items-center justify-center px-4">
+        <div class="max-w-md w-full text-center">
+            <!-- Icon -->
+            <div class="mx-auto w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mb-6">
+                <svg class="w-10 h-10 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                </svg>
+            </div>
+
+            <!-- Title -->
+            <h1 class="text-2xl font-bold text-gray-900 mb-3">Access Denied</h1>
+
+            <!-- Message -->
+            <p class="text-gray-600 mb-8">
+                It appears you have no access to the dashboard. Please contact your administrator to request the necessary permissions.
+            </p>
+
+            <!-- User Info -->
+            {% if session.username %}
+            <div class="bg-white rounded-lg border border-gray-200 p-4 mb-6">
+                <p class="text-sm text-gray-500">Logged in as</p>
+                <p class="font-medium text-gray-900">{{ session.username }}</p>
+            </div>
+            {% endif %}
+
+            <!-- Actions -->
+            <div class="flex flex-col sm:flex-row gap-3 justify-center">
+                <a href="{{ url_for('logout') }}" class="inline-flex items-center justify-center px-6 py-3 bg-gray-900 text-white font-medium rounded-lg hover:bg-gray-800 transition-colors">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+                    </svg>
+                    Logout
+                </a>
+                <button onclick="location.reload()" class="inline-flex items-center justify-center px-6 py-3 bg-white text-gray-700 font-medium rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                    </svg>
+                    Retry
+                </button>
+            </div>
+
+            <!-- Footer -->
+            <p class="mt-8 text-xs text-gray-400">
+                If you believe this is an error, please contact your system administrator.
+            </p>
+        </div>
+    </div>
+</body>
+</html>

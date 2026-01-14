@@ -1,0 +1,333 @@
+{% extends "base.html" %}
+
+{% block title %}Vehicle Access Control{% endblock %}
+
+{% block nav_items %}
+    <a href="{{ url_for('dashboard') }}" class="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors">
+        Dashboard
+    </a>
+{% endblock %}
+
+{% block nav_status %}
+    <div class="h-4 w-px bg-gray-200 mx-2"></div>
+    <a href="{{ url_for('logout') }}" class="px-3 py-1.5 text-sm text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+        </svg>
+        Logout
+    </a>
+{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-50 pt-20 px-8 pb-8">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header with User Selection -->
+        <div class="flex items-center justify-between mb-8">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-900 mb-2">Vehicle Access Control</h1>
+                <p class="text-gray-600">Configure vehicle-level permissions for users</p>
+            </div>
+
+            <!-- User Selection Dropdown -->
+            <div class="w-72">
+                <label for="userSelect" class="block text-sm font-medium text-gray-700 mb-2">Select User</label>
+                <select id="userSelect" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white">
+                    <option value="">-- Choose a user --</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Loading Indicator -->
+        <div id="loadingIndicator" class="text-center py-12">
+            <div class="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+            <p class="mt-4 text-gray-600">Loading vehicles...</p>
+        </div>
+
+        <!-- No User Selected Message -->
+        <div id="noUserMessage" class="hidden bg-blue-50 border border-blue-200 rounded-lg p-8 text-center">
+            <svg class="w-16 h-16 mx-auto mb-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/>
+            </svg>
+            <h3 class="text-lg font-semibold text-gray-900 mb-2">Select a User</h3>
+            <p class="text-gray-600">Please select a user from the dropdown above to configure their vehicle access permissions</p>
+        </div>
+
+        <!-- Success/Error Messages -->
+        <div id="messageContainer" class="mb-6"></div>
+
+        <!-- RBAC Table -->
+        <div id="rbacTable" class="hidden bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <!-- Table Header -->
+            <div class="px-6 py-4 border-b border-gray-200 bg-gray-50">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-lg font-semibold text-gray-900">Vehicle Permissions for <span id="selectedUserName" class="text-blue-600"></span></h3>
+                    <button onclick="saveAllPermissions()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                        </svg>
+                        Save All Changes
+                    </button>
+                </div>
+            </div>
+
+            <!-- Table -->
+            <div class="overflow-x-auto">
+                <table class="w-full table-fixed">
+                    <colgroup>
+                        <col style="width: 40%;">
+                        <col style="width: 30%;">
+                        <col style="width: 30%;">
+                    </colgroup>
+                    <thead class="bg-gray-50 border-b border-gray-200">
+                        <tr>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Vehicle Number</th>
+                            <th class="px-6 py-4 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                                <div class="flex flex-col items-center gap-2">
+                                    <span>Dispatch</span>
+                                    <label class="flex items-center text-xs font-normal text-gray-500 cursor-pointer">
+                                        <input type="checkbox" id="selectAllDispatch" class="mr-1.5 rounded cursor-pointer" onchange="toggleAllColumn('dispatch')">
+                                        Select All
+                                    </label>
+                                </div>
+                            </th>
+                            <th class="px-6 py-4 text-center text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                                <div class="flex flex-col items-center gap-2">
+                                    <span>Geofence</span>
+                                    <label class="flex items-center text-xs font-normal text-gray-500 cursor-pointer">
+                                        <input type="checkbox" id="selectAllGeofence" class="mr-1.5 rounded cursor-pointer" onchange="toggleAllColumn('geofence')">
+                                        Select All
+                                    </label>
+                                </div>
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody id="vehicleTableBody" class="divide-y divide-gray-200 bg-white">
+                        <!-- Rows will be populated by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Save Button (Bottom) -->
+            <div class="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end">
+                <button onclick="saveAllPermissions()" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                    </svg>
+                    Save All Changes
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let vehicles = [];
+let users = [];
+let currentUserId = null;
+let currentPermissions = {};
+
+// Load data on page load
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadUsers();
+    await loadVehicles();
+});
+
+// Load all users
+async function loadUsers() {
+    try {
+        const response = await fetch('/api/rbac/users');
+        users = await response.json();
+
+        const userSelect = document.getElementById('userSelect');
+        users.forEach(user => {
+            const option = document.createElement('option');
+            option.value = user.id;
+            option.textContent = `User ${user.display_id} - ${user.name} (${user.email})`;
+            userSelect.appendChild(option);
+        });
+
+        // Add change event listener
+        userSelect.addEventListener('change', onUserSelected);
+    } catch (error) {
+        showMessage('Error loading users: ' + error.message, 'error');
+    }
+}
+
+// Load all vehicles
+async function loadVehicles() {
+    try {
+        const response = await fetch('/api/rbac/vehicles');
+        vehicles = await response.json();
+        document.getElementById('loadingIndicator').classList.add('hidden');
+        document.getElementById('noUserMessage').classList.remove('hidden');
+    } catch (error) {
+        showMessage('Error loading vehicles: ' + error.message, 'error');
+        document.getElementById('loadingIndicator').classList.add('hidden');
+    }
+}
+
+// Handle user selection
+async function onUserSelected(event) {
+    currentUserId = event.target.value;
+
+    if (!currentUserId) {
+        document.getElementById('rbacTable').classList.add('hidden');
+        document.getElementById('noUserMessage').classList.remove('hidden');
+        return;
+    }
+
+    // Show table
+    document.getElementById('noUserMessage').classList.add('hidden');
+    document.getElementById('rbacTable').classList.remove('hidden');
+
+    // Update user name
+    const selectedUser = users.find(u => u.id == currentUserId);
+    document.getElementById('selectedUserName').textContent = selectedUser.name;
+
+    // Load permissions
+    await loadPermissions(currentUserId);
+    renderTable();
+}
+
+// Load permissions for selected user
+async function loadPermissions(userId) {
+    try {
+        const response = await fetch(`/api/rbac/permissions/${userId}`);
+        currentPermissions = await response.json();
+    } catch (error) {
+        showMessage('Error loading permissions: ' + error.message, 'error');
+        currentPermissions = {};
+    }
+}
+
+// Render table with vehicles and checkboxes
+function renderTable() {
+    const tbody = document.getElementById('vehicleTableBody');
+    tbody.innerHTML = '';
+
+    vehicles.forEach(vehicle => {
+        const row = document.createElement('tr');
+        row.className = 'hover:bg-gray-50 transition-colors';
+
+        const permissions = currentPermissions[vehicle.number] || { dispatch: false, geofence: false };
+
+        row.innerHTML = `
+            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${vehicle.number}</td>
+            <td class="px-6 py-4 text-center">
+                <div class="flex items-center justify-center">
+                    <input type="checkbox"
+                           class="dispatch-checkbox w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                           data-vehicle="${vehicle.number}"
+                           ${permissions.dispatch ? 'checked' : ''}>
+                </div>
+            </td>
+            <td class="px-6 py-4 text-center">
+                <div class="flex items-center justify-center">
+                    <input type="checkbox"
+                           class="geofence-checkbox w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                           data-vehicle="${vehicle.number}"
+                           ${permissions.geofence ? 'checked' : ''}>
+                </div>
+            </td>
+        `;
+
+        tbody.appendChild(row);
+    });
+
+    // Update "Select All" checkboxes
+    updateSelectAllCheckboxes();
+}
+
+// Toggle all checkboxes in a column
+function toggleAllColumn(column) {
+    const checkboxId = column === 'dispatch' ? 'selectAllDispatch' : 'selectAllGeofence';
+    const checkboxClass = column === 'dispatch' ? 'dispatch-checkbox' : 'geofence-checkbox';
+
+    const selectAllChecked = document.getElementById(checkboxId).checked;
+    const checkboxes = document.querySelectorAll(`.${checkboxClass}`);
+
+    checkboxes.forEach(checkbox => {
+        checkbox.checked = selectAllChecked;
+    });
+}
+
+// Update "Select All" checkbox states based on individual checkboxes
+function updateSelectAllCheckboxes() {
+    const dispatchCheckboxes = document.querySelectorAll('.dispatch-checkbox');
+    const geofenceCheckboxes = document.querySelectorAll('.geofence-checkbox');
+
+    const allDispatchChecked = Array.from(dispatchCheckboxes).every(cb => cb.checked);
+    const allGeofenceChecked = Array.from(geofenceCheckboxes).every(cb => cb.checked);
+
+    document.getElementById('selectAllDispatch').checked = allDispatchChecked;
+    document.getElementById('selectAllGeofence').checked = allGeofenceChecked;
+}
+
+// Save all permissions
+async function saveAllPermissions() {
+    if (!currentUserId) {
+        showMessage('Please select a user first', 'error');
+        return;
+    }
+
+    const saveButton = event.target.closest('button');
+    saveButton.disabled = true;
+    saveButton.innerHTML = '<svg class="animate-spin h-5 w-5 mr-2 inline" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Saving...';
+
+    try {
+        const dispatchCheckboxes = document.querySelectorAll('.dispatch-checkbox');
+        const geofenceCheckboxes = document.querySelectorAll('.geofence-checkbox');
+
+        const promises = [];
+
+        vehicles.forEach((vehicle, index) => {
+            const dispatchAccess = dispatchCheckboxes[index].checked;
+            const geofenceAccess = geofenceCheckboxes[index].checked;
+
+            promises.push(
+                fetch('/api/rbac/permissions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: parseInt(currentUserId),
+                        vehicle_number: vehicle.number,
+                        dispatch_access: dispatchAccess,
+                        geofence_access: geofenceAccess
+                    })
+                })
+            );
+        });
+
+        await Promise.all(promises);
+        showMessage('Permissions saved successfully!', 'success');
+
+        // Reload permissions
+        await loadPermissions(currentUserId);
+    } catch (error) {
+        showMessage('Error saving permissions: ' + error.message, 'error');
+    } finally {
+        saveButton.disabled = false;
+        saveButton.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Save All Changes';
+    }
+}
+
+// Show success/error message
+function showMessage(message, type) {
+    const container = document.getElementById('messageContainer');
+    const bgColor = type === 'success' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800';
+
+    container.innerHTML = `
+        <div class="${bgColor} border rounded-lg p-4">
+            ${message}
+        </div>
+    `;
+
+    // Auto-hide after 5 seconds
+    setTimeout(() => {
+        container.innerHTML = '';
+    }, 5000);
+}
+</script>
+{% endblock %}

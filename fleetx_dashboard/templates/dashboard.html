@@ -69,15 +69,21 @@
 {% endblock %}
 
 {% block nav_items %}
+            {% if nav_permissions.vehicles %}
             <button onclick="togglePanel('vehicles')" class="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors">
                 Vehicles
             </button>
+            {% endif %}
+            {% if nav_permissions.dispatch %}
             <button onclick="togglePanel('dispatch')" class="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors">
                 Dispatch
             </button>
+            {% endif %}
+            {% if nav_permissions.geofence %}
             <button onclick="togglePanel('geofence')" class="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors">
                 Geofences
             </button>
+            {% endif %}
 {% endblock %}
 
 {% block nav_status %}
@@ -93,6 +99,13 @@
                 <span class="w-2 h-2 rounded-full bg-red-500"></span>
                 <span class="text-gray-600"><span id="stopped-count" class="font-medium text-gray-900">0</span> Stopped</span>
             </div>
+            <div class="h-4 w-px bg-gray-200 mx-2"></div>
+            <a href="{{ url_for('logout') }}" class="px-3 py-1.5 text-sm text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+                </svg>
+                Logout
+            </a>
 {% endblock %}
 
 {% block content %}
@@ -112,6 +125,38 @@
 {% endblock %}
 
 {% block scripts %}
+    <script>
+        // Prevent caching and back-button access after logout
+        window.onload = function() {
+            // Disable back button
+            window.history.forward();
+        };
+
+        // Force reload if page is accessed from browser cache (bfcache)
+        window.onpageshow = function(event) {
+            if (event.persisted) {
+                window.location.reload();
+            }
+        };
+
+        // Additional protection: Check session validity on page visibility
+        document.addEventListener('visibilitychange', function() {
+            if (!document.hidden) {
+                // Page became visible - verify session is still valid
+                fetch('/api/vehicles')
+                    .then(response => {
+                        if (response.redirected) {
+                            // Session expired, redirect to login
+                            window.location.href = '/login';
+                        }
+                    })
+                    .catch(() => {
+                        // Network error or session invalid
+                        window.location.href = '/login';
+                    });
+            }
+        });
+    </script>
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
     <script src="{{ url_for('static', filename='js/vehicle-3d-model.js') }}"></script>
 {% endblock %}
