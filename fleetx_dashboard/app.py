@@ -4,12 +4,13 @@ FleetX Dashboard - Flask Application
 Vehicle route playback, geofencing, and decision-making stats
 """
 
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, session, redirect, url_for, flash, make_response
 import sqlite3
 import json
 from datetime import datetime, timedelta
 from functools import wraps
 import os
+import pytz
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'fleetx-dashboard-secret'
@@ -17,6 +18,7 @@ app.config['SECRET_KEY'] = 'fleetx-dashboard-secret'
 # Database path - adjust if needed
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'fleetx_data.db')
 GEOFENCE_DB = os.path.join(os.path.dirname(__file__), 'geofences.db')
+USERS_DB = os.path.join(os.path.dirname(__file__), 'users.db')
 
 
 def get_db_connection():
@@ -29,6 +31,13 @@ def get_db_connection():
 def get_geofence_db():
     """Get connection to geofence database"""
     conn = sqlite3.connect(GEOFENCE_DB)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def get_users_db():
+    """Get connection to users database"""
+    conn = sqlite3.connect(USERS_DB)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -56,15 +65,712 @@ def init_geofence_db():
     conn.close()
 
 
+def init_users_db():
+    """Initialize users database with schema"""
+    conn = get_users_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            role TEXT DEFAULT 'user',
+            must_reset_password INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Create RBAC table for vehicle-level access control
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS vehicle_access_control (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            vehicle_number TEXT NOT NULL,
+            dispatch_access INTEGER DEFAULT 0,
+            geofence_access INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(user_id, vehicle_number)
+        )
+    ''')
+
+    # Create audit_logs table for tracking user activity
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            username TEXT,
+            event_type TEXT NOT NULL,
+            page_route TEXT,
+            ip_address TEXT,
+            user_agent TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+        )
+    ''')
+
+    # Create index for faster queries on common filters
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_logs(timestamp DESC)
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_audit_user_id ON audit_logs(user_id)
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_audit_event_type ON audit_logs(event_type)
+    ''')
+
+    conn.commit()
+    conn.close()
+
+
 init_geofence_db()
+init_users_db()
+
+
+# ============== AUDIT LOGGING ==============
+
+def log_audit_event(event_type, page_route=None, user_id=None, username=None):
+    """
+    Log an audit event to the database
+
+    Args:
+        event_type: Type of event ('login', 'logout', 'page_access')
+        page_route: The route/page accessed (optional, null for login/logout)
+        user_id: User ID (optional, will try to get from session)
+        username: Username (optional, will try to get from session)
+    """
+    try:
+        # Get user info from session if not provided
+        if user_id is None:
+            user_id = session.get('user_id')
+        if username is None:
+            username = session.get('username')
+
+        # Get IP address
+        if request.environ.get('HTTP_X_FORWARDED_FOR'):
+            ip_address = request.environ['HTTP_X_FORWARDED_FOR'].split(',')[0]
+        else:
+            ip_address = request.environ.get('REMOTE_ADDR', 'Unknown')
+
+        # Get user agent
+        user_agent = request.headers.get('User-Agent', '')[:255]  # Limit length
+
+        # Insert audit log
+        conn = get_users_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO audit_logs (user_id, username, event_type, page_route, ip_address, user_agent)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (user_id, username, event_type, page_route, ip_address, user_agent))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        # Don't let audit logging break the app
+        print(f"Audit logging error: {e}")
+
+
+# ============== AUTHENTICATION ==============
+
+def get_user_nav_permissions(user_id):
+    """
+    Get aggregated navigation permissions for a user.
+    Returns which nav items the user should see based on their RBAC settings.
+    Admin users get full access.
+    """
+    conn = get_users_db()
+    cursor = conn.cursor()
+
+    # Check if user is admin
+    cursor.execute('SELECT role FROM users WHERE id = ?', (user_id,))
+    user = cursor.fetchone()
+    if user and user['role'] == 'admin':
+        conn.close()
+        return {
+            'vehicles': True,
+            'dispatch': True,
+            'geofence': True
+        }
+
+    # For regular users, aggregate permissions across all vehicles
+    cursor.execute('''
+        SELECT
+            MAX(dispatch_access) as has_dispatch,
+            MAX(geofence_access) as has_geofence
+        FROM vehicle_access_control
+        WHERE user_id = ?
+    ''', (user_id,))
+
+    result = cursor.fetchone()
+    conn.close()
+
+    if result:
+        has_dispatch = bool(result['has_dispatch']) if result['has_dispatch'] else False
+        has_geofence = bool(result['has_geofence']) if result['has_geofence'] else False
+    else:
+        has_dispatch = False
+        has_geofence = False
+
+    # Vehicles nav is shown if user has ANY permission (dispatch or geofence)
+    # This ensures they can at least see the vehicles they have access to
+    has_vehicles = has_dispatch or has_geofence
+
+    return {
+        'vehicles': has_vehicles,
+        'dispatch': has_dispatch,
+        'geofence': has_geofence
+    }
+
+
+def login_required(f):
+    """Decorator to protect routes that require authentication"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'logged_in' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+def admin_required(f):
+    """Decorator to protect routes that require admin role"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'logged_in' not in session:
+            return redirect(url_for('login'))
+        if session.get('role') != 'admin':
+            flash('Access denied. Admin privileges required.', 'error')
+            return redirect(url_for('dashboard'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+def no_cache(f):
+    """Decorator to prevent browser caching of protected pages"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        response = make_response(f(*args, **kwargs))
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, post-check=0, pre-check=0, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '-1'
+        return response
+    return decorated_function
+
+
+def dispatch_access_required(f):
+    """Decorator to protect dispatch-related routes based on RBAC"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'logged_in' not in session:
+            return jsonify({'error': 'Authentication required'}), 401
+
+        # Admin users have full access
+        if session.get('role') == 'admin':
+            return f(*args, **kwargs)
+
+        # Check if user has dispatch access to any vehicle
+        nav_permissions = get_user_nav_permissions(session.get('user_id'))
+        if not nav_permissions.get('dispatch'):
+            return jsonify({'error': 'Access denied. Dispatch permission required.'}), 403
+
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+def geofence_access_required(f):
+    """Decorator to protect geofence-related routes based on RBAC"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'logged_in' not in session:
+            return jsonify({'error': 'Authentication required'}), 401
+
+        # Admin users have full access
+        if session.get('role') == 'admin':
+            return f(*args, **kwargs)
+
+        # Check if user has geofence access to any vehicle
+        nav_permissions = get_user_nav_permissions(session.get('user_id'))
+        if not nav_permissions.get('geofence'):
+            return jsonify({'error': 'Access denied. Geofence permission required.'}), 403
+
+        return f(*args, **kwargs)
+    return decorated_function
 
 
 # ============== PAGES ==============
 
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """Login page and authentication handler"""
+    if request.method == 'POST':
+        identifier = request.form.get('username')  # Can be user ID, username, or email
+        password = request.form.get('password')
+
+        # Check database users - accept ID, username (name), or email
+        conn = get_users_db()
+        cursor = conn.cursor()
+
+        # Try to match by ID (if identifier is numeric), username, or email
+        if identifier.isdigit():
+            # If input is numeric, try ID first
+            cursor.execute('SELECT * FROM users WHERE id = ? OR name = ? OR email = ?',
+                         (int(identifier), identifier, identifier))
+        else:
+            # If not numeric, try username or email
+            cursor.execute('SELECT * FROM users WHERE name = ? OR email = ?',
+                         (identifier, identifier))
+
+        user = cursor.fetchone()
+        conn.close()
+
+        if user and user['password'] == password:  # In production, use hashed passwords
+            # Check if user must reset password
+            if user['must_reset_password']:
+                session['temp_user_id'] = user['id']
+                return redirect(url_for('reset_password'))
+
+            session['logged_in'] = True
+            session['username'] = user['name']
+            session['user_id'] = user['id']
+            session['role'] = user['role']
+
+            # Load and store RBAC navigation permissions
+            session['nav_permissions'] = get_user_nav_permissions(user['id'])
+
+            # Log successful login
+            log_audit_event('login', user_id=user['id'], username=user['name'])
+
+            return redirect(url_for('dashboard'))
+        else:
+            return render_template('login.html', error='Invalid credentials')
+
+    # If already logged in, redirect to dashboard
+    if 'logged_in' in session:
+        return redirect(url_for('dashboard'))
+
+    return render_template('login.html')
+
+
+@app.route('/logout')
+@no_cache
+def logout():
+    """Logout handler - clears session and prevents caching"""
+    # Log logout before clearing session
+    log_audit_event('logout')
+
+    session.clear()
+    response = make_response(redirect(url_for('login')))
+    response.headers['Clear-Site-Data'] = '"cache", "cookies", "storage"'
+    return response
+
+
 @app.route('/')
+@login_required
+@no_cache
 def dashboard():
-    """Main dashboard page"""
-    return render_template('dashboard.html')
+    """Main dashboard page - requires authentication and prevents caching"""
+    # Refresh RBAC permissions on each dashboard load (reflects admin changes immediately)
+    nav_permissions = get_user_nav_permissions(session.get('user_id'))
+    session['nav_permissions'] = nav_permissions
+
+    # Check if user has ANY permissions (admin users always have access)
+    if session.get('role') != 'admin':
+        has_any_permission = any([
+            nav_permissions.get('vehicles'),
+            nav_permissions.get('dispatch'),
+            nav_permissions.get('geofence')
+        ])
+        if not has_any_permission:
+            return redirect(url_for('no_access'))
+
+    # Log page access
+    log_audit_event('page_access', page_route='Dashboard')
+
+    return render_template('dashboard.html', nav_permissions=nav_permissions)
+
+
+@app.route('/no-access')
+@login_required
+@no_cache
+def no_access():
+    """No access page for users with zero permissions"""
+    # If user is admin or has permissions, redirect to dashboard
+    if session.get('role') == 'admin':
+        return redirect(url_for('dashboard'))
+
+    nav_permissions = get_user_nav_permissions(session.get('user_id'))
+    has_any_permission = any([
+        nav_permissions.get('vehicles'),
+        nav_permissions.get('dispatch'),
+        nav_permissions.get('geofence')
+    ])
+
+    if has_any_permission:
+        return redirect(url_for('dashboard'))
+
+    # Log the access attempt
+    log_audit_event('page_access', page_route='No Access Page')
+
+    return render_template('no_access.html')
+
+
+@app.route('/reset-password', methods=['GET', 'POST'])
+def reset_password():
+    """Force password reset for first-time login"""
+    if 'temp_user_id' not in session:
+        return redirect(url_for('login'))
+
+    if request.method == 'POST':
+        new_password = request.form.get('new_password')
+        confirm_password = request.form.get('confirm_password')
+
+        if not new_password or len(new_password) < 6:
+            return render_template('reset_password.html', error='Password must be at least 6 characters')
+
+        if new_password != confirm_password:
+            return render_template('reset_password.html', error='Passwords do not match')
+
+        # Update password and clear reset flag
+        conn = get_users_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE users SET password = ?, must_reset_password = 0, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ''', (new_password, session['temp_user_id']))
+        conn.commit()
+
+        # Get user info for session
+        cursor.execute('SELECT * FROM users WHERE id = ?', (session['temp_user_id'],))
+        user = cursor.fetchone()
+        conn.close()
+
+        # Log user in
+        session.pop('temp_user_id', None)
+        session['logged_in'] = True
+        session['username'] = user['name']
+        session['user_id'] = user['id']
+        session['role'] = user['role']
+
+        flash('Password updated successfully!', 'success')
+        return redirect(url_for('dashboard'))
+
+    return render_template('reset_password.html')
+
+
+# ============== ADMIN ROUTES ==============
+
+@app.route('/admin')
+@admin_required
+@no_cache
+def admin_dashboard():
+    """Admin dashboard page - requires admin role"""
+    # Log page access
+    log_audit_event('page_access', page_route='Admin Dashboard')
+
+    return render_template('admin.html')
+
+
+@app.route('/admin/users')
+@admin_required
+@no_cache
+def manage_users():
+    """Manage users page - requires admin role"""
+    # Log page access
+    log_audit_event('page_access', page_route='Admin - Manage Users')
+
+    conn = get_users_db()
+    cursor = conn.cursor()
+    # Order by role (admin first), then by created_at DESC
+    cursor.execute('SELECT * FROM users ORDER BY CASE WHEN role = "admin" THEN 0 ELSE 1 END, created_at DESC')
+    users_raw = cursor.fetchall()
+    conn.close()
+
+    # Add display IDs (sequential starting from 1)
+    users = []
+    for index, user in enumerate(users_raw, start=1):
+        user_dict = dict(user)
+        user_dict['display_id'] = index
+        users.append(user_dict)
+
+    return render_template('manage_users.html', users=users)
+
+
+@app.route('/admin/users/add', methods=['POST'])
+@admin_required
+def add_user():
+    """Create a new user"""
+    name = request.form.get('name')
+    email = request.form.get('email')
+    password = request.form.get('password')
+    role = request.form.get('role', 'user')
+
+    if not name or not email or not password:
+        flash('All fields are required', 'error')
+        return redirect(url_for('manage_users'))
+
+    if len(password) < 6:
+        flash('Password must be at least 6 characters', 'error')
+        return redirect(url_for('manage_users'))
+
+    conn = get_users_db()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+            INSERT INTO users (name, email, password, role, must_reset_password)
+            VALUES (?, ?, ?, ?, 1)
+        ''', (name, email, password, role))
+        conn.commit()
+        flash(f'User {name} created successfully', 'success')
+    except sqlite3.IntegrityError:
+        flash('Email already exists', 'error')
+    finally:
+        conn.close()
+
+    return redirect(url_for('manage_users'))
+
+
+@app.route('/admin/users/<int:user_id>/update', methods=['POST'])
+@admin_required
+def update_user(user_id):
+    """Update an existing user"""
+    name = request.form.get('name')
+    email = request.form.get('email')
+    password = request.form.get('password')
+    role = request.form.get('role', 'user')
+
+    if not name or not email:
+        flash('Name and email are required', 'error')
+        return redirect(url_for('manage_users'))
+
+    conn = get_users_db()
+    cursor = conn.cursor()
+
+    try:
+        if password:
+            # Update with new password and force reset
+            if len(password) < 6:
+                flash('Password must be at least 6 characters', 'error')
+                conn.close()
+                return redirect(url_for('manage_users'))
+
+            cursor.execute('''
+                UPDATE users SET name = ?, email = ?, password = ?, role = ?,
+                                 must_reset_password = 1, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (name, email, password, role, user_id))
+        else:
+            # Update without changing password
+            cursor.execute('''
+                UPDATE users SET name = ?, email = ?, role = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (name, email, role, user_id))
+
+        conn.commit()
+        flash('User updated successfully', 'success')
+    except sqlite3.IntegrityError:
+        flash('Email already exists', 'error')
+    finally:
+        conn.close()
+
+    return redirect(url_for('manage_users'))
+
+
+@app.route('/admin/users/<int:user_id>/delete', methods=['POST'])
+@admin_required
+def delete_user(user_id):
+    """Delete a user"""
+    conn = get_users_db()
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM users WHERE id = ?', (user_id,))
+    conn.commit()
+    conn.close()
+
+    flash('User deleted successfully', 'success')
+    return redirect(url_for('manage_users'))
+
+
+# ============== RBAC ROUTES ==============
+
+@app.route('/admin/rbac')
+@admin_required
+@no_cache
+def rbac_dashboard():
+    """RBAC vehicle access control page"""
+    # Log page access
+    log_audit_event('page_access', page_route='Admin - RBAC')
+
+    return render_template('rbac.html')
+
+
+@app.route('/api/rbac/vehicles')
+@admin_required
+def get_rbac_vehicles():
+    """Get distinct vehicles from fleetx_data.db"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT DISTINCT vehicle_number, vehicle_name
+        FROM vehicle_location_history
+        WHERE vehicle_number IS NOT NULL AND vehicle_number != ''
+        ORDER BY vehicle_number
+    ''')
+    vehicles = [{'number': row[0], 'name': row[1]} for row in cursor.fetchall()]
+    conn.close()
+    return jsonify(vehicles)
+
+
+@app.route('/api/rbac/users')
+@admin_required
+def get_rbac_users():
+    """Get all users for RBAC dropdown"""
+    conn = get_users_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, name, email, role FROM users WHERE role != \"admin\" ORDER BY name')
+    users_raw = cursor.fetchall()
+    conn.close()
+
+    # Add display IDs (sequential starting from 1)
+    users = []
+    for index, row in enumerate(users_raw, start=1):
+        users.append({
+            'id': row[0],
+            'display_id': index,
+            'name': row[1],
+            'email': row[2],
+            'role': row[3]
+        })
+
+    return jsonify(users)
+
+
+@app.route('/api/rbac/permissions/<int:user_id>')
+@admin_required
+def get_user_permissions(user_id):
+    """Get vehicle access permissions for a specific user"""
+    conn = get_users_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT vehicle_number, dispatch_access, geofence_access
+        FROM vehicle_access_control
+        WHERE user_id = ?
+    ''', (user_id,))
+
+    permissions = {}
+    for row in cursor.fetchall():
+        permissions[row[0]] = {
+            'dispatch': bool(row[1]),
+            'geofence': bool(row[2])
+        }
+    conn.close()
+    return jsonify(permissions)
+
+
+@app.route('/api/rbac/permissions', methods=['POST'])
+@admin_required
+def save_permissions():
+    """Save vehicle access permissions for a user"""
+    data = request.json
+    user_id = data.get('user_id')
+    vehicle_number = data.get('vehicle_number')
+    dispatch_access = data.get('dispatch_access', False)
+    geofence_access = data.get('geofence_access', False)
+
+    if not user_id or not vehicle_number:
+        return jsonify({'error': 'Missing required fields'}), 400
+
+    conn = get_users_db()
+    cursor = conn.cursor()
+
+    try:
+        # Use INSERT OR REPLACE to handle both new and existing records
+        cursor.execute('''
+            INSERT OR REPLACE INTO vehicle_access_control
+            (user_id, vehicle_number, dispatch_access, geofence_access, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ''', (user_id, vehicle_number, int(dispatch_access), int(geofence_access)))
+        conn.commit()
+        conn.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.close()
+        return jsonify({'error': str(e)}), 500
+
+
+# ============== AUDIT LOGS ROUTES ==============
+
+@app.route('/admin/audit-logs')
+@admin_required
+@no_cache
+def audit_logs():
+    """Audit logs page - requires admin role"""
+    # Log page access
+    log_audit_event('page_access', page_route='Admin - Audit Logs')
+
+    # Get filter parameters
+    event_type_filter = request.args.get('event_type', 'all')
+    user_id_filter = request.args.get('user_id', 'all')
+    limit = request.args.get('limit', 100, type=int)
+
+    conn = get_users_db()
+    cursor = conn.cursor()
+
+    # Build query based on filters
+    query = 'SELECT * FROM audit_logs WHERE 1=1'
+    params = []
+
+    if event_type_filter != 'all':
+        query += ' AND event_type = ?'
+        params.append(event_type_filter)
+
+    if user_id_filter != 'all':
+        query += ' AND user_id = ?'
+        params.append(int(user_id_filter))
+
+    query += ' ORDER BY timestamp DESC LIMIT ?'
+    params.append(limit)
+
+    cursor.execute(query, params)
+    logs_raw = cursor.fetchall()
+
+    # Get all users for filter dropdown
+    cursor.execute('SELECT id, name FROM users ORDER BY name')
+    users_raw = cursor.fetchall()
+
+    # Add display IDs to users
+    users = []
+    for index, user_row in enumerate(users_raw, start=1):
+        users.append({
+            'id': user_row[0],
+            'display_id': index,
+            'name': user_row[1]
+        })
+
+    conn.close()
+
+    # Convert timestamps to IST
+    ist = pytz.timezone('Asia/Kolkata')
+    logs = []
+    for log in logs_raw:
+        log_dict = dict(log)
+        if log_dict['timestamp']:
+            # Parse the UTC timestamp from database
+            utc_time = datetime.strptime(log_dict['timestamp'], '%Y-%m-%d %H:%M:%S')
+            utc_time = pytz.utc.localize(utc_time)
+            # Convert to IST
+            ist_time = utc_time.astimezone(ist)
+            log_dict['timestamp'] = ist_time.strftime('%Y-%m-%d %I:%M:%S %p IST')
+        logs.append(log_dict)
+
+    return render_template('audit_logs.html',
+                         logs=logs,
+                         users=users,
+                         event_type_filter=event_type_filter,
+                         user_id_filter=user_id_filter,
+                         limit=limit)
 
 
 # ============== VEHICLE API ==============
@@ -313,6 +1019,7 @@ def get_available_dates(vehicle_id):
 # ============== GEOFENCING API ==============
 
 @app.route('/api/geofences', methods=['GET'])
+@geofence_access_required
 def get_geofences():
     """Get all geofences or filter by vehicle"""
     vehicle_id = request.args.get('vehicle_id', type=int)
@@ -347,6 +1054,7 @@ def get_geofences():
 
 
 @app.route('/api/geofences', methods=['POST'])
+@geofence_access_required
 def create_geofence():
     """Create a new geofence"""
     data = request.json
@@ -377,6 +1085,7 @@ def create_geofence():
 
 
 @app.route('/api/geofences/<int:geofence_id>', methods=['PUT'])
+@geofence_access_required
 def update_geofence(geofence_id):
     """Update a geofence"""
     data = request.json
@@ -415,6 +1124,7 @@ def update_geofence(geofence_id):
 
 
 @app.route('/api/geofences/<int:geofence_id>', methods=['DELETE'])
+@geofence_access_required
 def delete_geofence(geofence_id):
     """Delete a geofence"""
     conn = get_geofence_db()
@@ -429,6 +1139,7 @@ def delete_geofence(geofence_id):
 # ============== DISPATCH DECISION API ==============
 
 @app.route('/api/dispatch/rankings')
+@dispatch_access_required
 def get_dispatch_rankings():
     """Get vehicle rankings for dispatch decisions"""
     caller_lat = request.args.get('lat', type=float)

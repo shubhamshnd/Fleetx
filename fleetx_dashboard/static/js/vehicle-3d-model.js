@@ -30,7 +30,7 @@ function init3DModel() {
 
     // Create camera with isometric view - will be adjusted after model loads
     modelCamera = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
-    modelCamera.position.set(8, 12, 8); // Isometric angle position
+    modelCamera.position.set(-16, 8, 20); // Isometric angle position
     modelCamera.lookAt(0, 0, 0); // Look at the model center
 
     // Create renderer with error handling
@@ -150,6 +150,12 @@ function render3DModelToCanvas(size, bearing, statusColor) {
     modelRenderer.setSize(size[0], size[1]);
 
     // Rotate the model based on bearing
+    // Note: If your GLB model's front doesn't face forward by default,
+    // add an offset here (e.g., -90° if the front faces right in the model)
+    // Uncomment and adjust if needed:
+    // const bearingOffset = -90; // Adjust this value based on your model's default orientation
+    // car3DModel.rotation.y = THREE.MathUtils.degToRad(bearing + bearingOffset);
+
     car3DModel.rotation.y = THREE.MathUtils.degToRad(bearing);
 
     // Keep original texture - status color disabled

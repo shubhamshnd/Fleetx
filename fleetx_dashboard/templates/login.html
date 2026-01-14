@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+
+{% block title %}Login - JSW Jaigarh Port{% endblock %}
+
+{% block extra_styles %}
+/* Login page specific styles */
+.login-container {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(#8f9daa);
+}
+
+.login-card {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    padding: 2.5rem;
+    width: 100%;
+    max-width: 400px;
+    animation: slideUp 0.5s ease-out;
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.input-field {
+    transition: all 0.3s ease;
+}
+
+.input-field:focus {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+}
+
+.login-btn {
+    transition: all 0.3s ease;
+}
+
+.login-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+}
+
+.login-btn:active {
+    transform: translateY(0);
+}
+{% endblock %}
+
+{% block content %}
+<div class="login-container">
+    <div class="login-card">
+        <!-- Logo/Header -->
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-bold text-gray-900 mb-2">JSW Jaigarh Port</h1>
+            <p class="text-gray-600 text-sm">Sign in to access your fleet management system</p>
+        </div>
+
+        <!-- Error Message -->
+        {% if error %}
+        <div class="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <div class="flex items-center">
+                <svg class="w-5 h-5 text-red-500 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                </svg>
+                <span class="text-red-700 text-sm font-medium">{{ error }}</span>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Login Form -->
+        <form method="POST" action="{{ url_for('login') }}">
+            <!-- User Identifier Field -->
+            <div class="mb-5">
+                <label for="username" class="block text-sm font-medium text-gray-700 mb-2">
+                    User ID / Username / Email
+                </label>
+                <input
+                    type="text"
+                    id="username"
+                    name="username"
+                    required
+                    autofocus
+                    class="input-field w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    placeholder="Enter your ID, username, or email"
+                >
+            </div>
+
+            <!-- Password Field -->
+            <div class="mb-6">
+                <label for="password" class="block text-sm font-medium text-gray-700 mb-2">
+                    Password
+                </label>
+                <input
+                    type="password"
+                    id="password"
+                    name="password"
+                    required
+                    class="input-field w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    placeholder="Enter your password"
+                >
+            </div>
+
+            <!-- Submit Button -->
+            <button
+                type="submit"
+                id="loginBtn"
+                disabled
+                class="login-btn w-full text-white font-semibold py-3 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-offset-2"
+                style="background-color: #8f9daa; cursor: not-allowed;"
+            >
+                Sign In
+            </button>
+
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // Prevent back button access after logout
+    window.history.forward();
+
+    // Disable browser back button caching
+    window.onpageshow = function(event) {
+        if (event.persisted) {
+            window.location.reload();
+        }
+    };
+
+    const username = document.getElementById('username');
+    const password = document.getElementById('password');
+    const button = document.getElementById('loginBtn');
+    const form = document.querySelector('form');
+
+    function checkInputs() {
+        if (username.value.trim() && password.value.trim()) {
+            button.disabled = false;
+            button.style.background = 'linear-gradient(to right, #7c3aed, #4f46e5)';
+            button.style.cursor = 'pointer';
+        } else {
+            button.disabled = true;
+            button.style.background = '#8f9daa';
+            button.style.cursor = 'not-allowed';
+        }
+    }
+
+    username.addEventListener('input', checkInputs);
+    password.addEventListener('input', checkInputs);
+
+    form.addEventListener('submit', () => {
+        button.disabled = true;
+        button.innerHTML = 'Signing in...';
+    });
+});
+</script>
+
+{% endblock %}

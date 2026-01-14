@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+
+{% block title %}Audit Logs{% endblock %}
+
+{% block nav_items %}
+    <a href="{{ url_for('dashboard') }}" class="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-colors">
+        Dashboard
+    </a>
+{% endblock %}
+
+{% block nav_status %}
+    <div class="h-4 w-px bg-gray-200 mx-2"></div>
+    <a href="{{ url_for('logout') }}" class="px-3 py-1.5 text-sm text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+        </svg>
+        Logout
+    </a>
+{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-50 pt-20 px-8 pb-8">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <div class="mb-8">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-900 mb-2">Audit Logs</h1>
+                    <p class="text-gray-600">Track user activity, authentication events, and page access</p>
+                </div>
+                <a href="{{ url_for('admin_dashboard') }}" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+                    </svg>
+                    Back to Admin
+                </a>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
+            <h2 class="text-lg font-semibold text-gray-900 mb-4">Filters</h2>
+            <form method="get" action="{{ url_for('audit_logs') }}" class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <!-- Event Type Filter -->
+                <div>
+                    <label for="event_type" class="block text-sm font-medium text-gray-700 mb-2">Event Type</label>
+                    <select name="event_type" id="event_type" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="all" {% if event_type_filter == 'all' %}selected{% endif %}>All Events</option>
+                        <option value="login" {% if event_type_filter == 'login' %}selected{% endif %}>Login</option>
+                        <option value="logout" {% if event_type_filter == 'logout' %}selected{% endif %}>Logout</option>
+                        <option value="page_access" {% if event_type_filter == 'page_access' %}selected{% endif %}>Page Access</option>
+                    </select>
+                </div>
+
+                <!-- User Filter -->
+                <div>
+                    <label for="user_id" class="block text-sm font-medium text-gray-700 mb-2">User</label>
+                    <select name="user_id" id="user_id" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="all" {% if user_id_filter == 'all' %}selected{% endif %}>All Users</option>
+                        {% for user in users %}
+                        <option value="{{ user['id'] }}" {% if user_id_filter == user['id']|string %}selected{% endif %}>User {{ user['display_id'] }} - {{ user['name'] }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Limit Filter -->
+                <div>
+                    <label for="limit" class="block text-sm font-medium text-gray-700 mb-2">Show Records</label>
+                    <select name="limit" id="limit" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="50" {% if limit == 50 %}selected{% endif %}>50 Records</option>
+                        <option value="100" {% if limit == 100 %}selected{% endif %}>100 Records</option>
+                        <option value="200" {% if limit == 200 %}selected{% endif %}>200 Records</option>
+                        <option value="500" {% if limit == 500 %}selected{% endif %}>500 Records</option>
+                    </select>
+                </div>
+
+                <!-- Apply Button -->
+                <div class="flex items-end">
+                    <button type="submit" class="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors">
+                        Apply Filters
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Audit Logs Table -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <!-- Scrollable Table Container -->
+            <div style="max-height: 600px; overflow-y: auto;">
+                <table class="w-full">
+                    <thead class="bg-gray-50 border-b border-gray-200" style="position: sticky; top: 0; z-index: 10;">
+                        <tr>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider bg-gray-50">Timestamp (IST)</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider bg-gray-50">User</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider bg-gray-50">Event Type</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider bg-gray-50">Page Accessed</th>
+                            <th class="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider bg-gray-50">IP Address</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-200 bg-white">
+                        {% if logs %}
+                            {% for log in logs %}
+                            <tr class="hover:bg-gray-50 transition-colors">
+                                <!-- Timestamp -->
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                    {{ log['timestamp'] }}
+                                </td>
+
+                                <!-- User -->
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <div class="flex flex-col">
+                                        <span class="text-sm font-medium text-gray-900">{{ log['username'] or 'Unknown' }}</span>
+                                        <span class="text-xs text-gray-500">ID: {{ log['user_id'] or 'N/A' }}</span>
+                                    </div>
+                                </td>
+
+                                <!-- Event Type -->
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    {% if log['event_type'] == 'login' %}
+                                        <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                            <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                            </svg>
+                                            Login
+                                        </span>
+                                    {% elif log['event_type'] == 'logout' %}
+                                        <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                            <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fill-rule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 102 0V4a1 1 0 00-1-1zm10.293 9.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L14.586 9H7a1 1 0 100 2h7.586l-1.293 1.293z" clip-rule="evenodd"/>
+                                            </svg>
+                                            Logout
+                                        </span>
+                                    {% elif log['event_type'] == 'page_access' %}
+                                        <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                            <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                                <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
+                                                <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/>
+                                            </svg>
+                                            Page Access
+                                        </span>
+                                    {% else %}
+                                        <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                                            {{ log['event_type'] }}
+                                        </span>
+                                    {% endif %}
+                                </td>
+
+                                <!-- Page Route -->
+                                <td class="px-6 py-4 text-sm text-gray-900">
+                                    {{ log['page_route'] or '-' }}
+                                </td>
+
+                                <!-- IP Address -->
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 font-mono">
+                                    {{ log['ip_address'] or 'Unknown' }}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="5" class="px-6 py-12 text-center">
+                                    <div class="flex flex-col items-center justify-center">
+                                        <svg class="w-16 h-16 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                                        </svg>
+                                        <p class="text-gray-600 text-lg font-medium">No audit logs found</p>
+                                        <p class="text-gray-500 text-sm mt-2">Try adjusting your filters or check back later</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Table Footer with Record Count (Outside scroll container) -->
+            {% if logs %}
+            <div class="px-6 py-4 bg-gray-50 border-t border-gray-200">
+                <p class="text-sm text-gray-600">
+                    Showing {{ logs|length }} record(s)
+                </p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

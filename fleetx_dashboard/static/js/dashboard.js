@@ -6,6 +6,7 @@
 let map;
 let vehicleMarkers = {};
 let vehiclesData = [];
+let vehiclePreviousPositions = {}; // Store previous positions for bearing calculation
 let geofenceLayers = {};
 let routePolyline = null;
 let routeMarker = null;
@@ -18,6 +19,8 @@ let callerMarker = null;
 let callerMode = false;
 let drawControl = null;
 let drawnItems;
+let buildingLabels = {};
+let buildingsData = [];
 
 // ============== INITIALIZATION ==============
 document.addEventListener('DOMContentLoaded', () => {
@@ -25,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadVehicles();
     loadGeofences();
     loadOverviewStats();
+    loadBuildings();  // Add this line
     setupEventListeners();
 
     // Refresh data periodically
@@ -37,9 +41,18 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function initMap() {
-    // Initialize map centered on India (default)
+    // Define India bounds (Southwest corner, Northeast corner)
+    const indiaBounds = L.latLngBounds(
+        [6.4, 68.1],    // Southwest: southernmost and westernmost point
+        [35.5, 97.4]    // Northeast: northernmost and easternmost point
+    );
+
+    // Initialize map centered on India with restrictions
     map = L.map('map', {
-        zoomControl: false
+        zoomControl: false,
+        minZoom: 4,                    // Prevent zooming out below level 4
+        maxBounds: indiaBounds,        // Restrict panning to India region
+        maxBoundsViscosity: 1.0        // Hard lock - prevents dragging outside bounds
     }).setView([20.5937, 78.9629], 5);
 
     // Add minimal tile layer
@@ -74,6 +87,8 @@ function initMap() {
     // Update markers when zoom changes
     map.on('zoomend', () => {
         updateVehicleMarkers();
+        updateBuildingLabels();  // Add this line
+
     });
 }
 
@@ -105,6 +120,38 @@ async function loadVehicles() {
     } catch (error) {
         console.error('Failed to load vehicles:', error);
     }
+}
+
+/**
+ * Calculate bearing (direction angle) between two geographic points
+ *
+ * @param {number} lat1 - Previous latitude
+ * @param {number} lon1 - Previous longitude
+ * @param {number} lat2 - Current latitude
+ * @param {number} lon2 - Current longitude
+ * @returns {number} Bearing in degrees (0-360), where 0° = North, 90° = East, 180° = South, 270° = West
+ *
+ * Formula explanation:
+ * - Converts lat/lng to radians
+ * - Uses spherical trigonometry to calculate bearing
+ * - Normalizes result to 0-360° range
+ */
+function calculateBearing(lat1, lon1, lat2, lon2) {
+    // Convert degrees to radians
+    const φ1 = lat1 * Math.PI / 180;
+    const φ2 = lat2 * Math.PI / 180;
+    const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+    // Calculate bearing using spherical law of cosines
+    const y = Math.sin(Δλ) * Math.cos(φ2);
+    const x = Math.cos(φ1) * Math.sin(φ2) -
+              Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+
+    // Convert to degrees and normalize to 0-360
+    const θ = Math.atan2(y, x);
+    const bearing = (θ * 180 / Math.PI + 360) % 360;
+
+    return bearing;
 }
 
 function createVehicleIcon(vehicle, zoomLevel) {
@@ -165,9 +212,30 @@ function adjustBrightness(color, percent) {
 
 function updateVehicleMarkers() {
     const currentZoom = map.getZoom();
-    
+
     vehiclesData.forEach(vehicle => {
         if (!vehicle.latitude || !vehicle.longitude) return;
+
+        // Calculate bearing from position change
+        const prevPos = vehiclePreviousPositions[vehicle.id];
+        if (prevPos && (prevPos.lat !== vehicle.latitude || prevPos.lng !== vehicle.longitude)) {
+            // Position changed - calculate new bearing
+            const calculatedBearing = calculateBearing(
+                prevPos.lat,
+                prevPos.lng,
+                vehicle.latitude,
+                vehicle.longitude
+            );
+
+            // Update vehicle bearing (prioritize calculated bearing over backend bearing)
+            vehicle.bearing = calculatedBearing;
+        }
+
+        // Store current position for next update
+        vehiclePreviousPositions[vehicle.id] = {
+            lat: vehicle.latitude,
+            lng: vehicle.longitude
+        };
 
         if (vehicleMarkers[vehicle.id]) {
             // Update existing marker
@@ -474,10 +542,20 @@ async function loadRoute() {
         }
 
         // Create playback marker with vehicle icon
+        // Calculate initial bearing from first two points if available
+        let initialBearing = routeData[0]?.bearing || 0;
+        if (routeData.length > 1 && routeData[0] && routeData[1]) {
+            const point1 = routeData[0];
+            const point2 = routeData[1];
+            if (point1.lat !== point2.lat || point1.lng !== point2.lng) {
+                initialBearing = calculateBearing(point1.lat, point1.lng, point2.lat, point2.lng);
+            }
+        }
+
         const playbackVehicle = {
             id: selectedVehicleId,
             status: routeData[0]?.status || 'UNKNOWN',
-            bearing: routeData[0]?.bearing || 0
+            bearing: initialBearing
         };
         const playbackIcon = createVehicleIcon(playbackVehicle, map.getZoom());
         routeMarker = L.marker(latlngs[0], { icon: playbackIcon }).addTo(map);
@@ -569,16 +647,32 @@ function updatePlaybackPosition() {
 
     const point = routeData[playbackIndex];
     routeMarker.setLatLng([point.lat, point.lng]);
-    
+
+    // Calculate bearing from movement direction during playback
+    let calculatedBearing = point.bearing || 0; // Default to backend bearing
+
+    if (playbackIndex > 0) {
+        // Calculate bearing from previous point to current point
+        const prevPoint = routeData[playbackIndex - 1];
+        if (prevPoint && (prevPoint.lat !== point.lat || prevPoint.lng !== point.lng)) {
+            calculatedBearing = calculateBearing(
+                prevPoint.lat,
+                prevPoint.lng,
+                point.lat,
+                point.lng
+            );
+        }
+    }
+
     // Update icon with current point's bearing and status
     const playbackVehicle = {
         id: selectedVehicleId,
         status: point.status || 'UNKNOWN',
-        bearing: point.bearing || 0
+        bearing: calculatedBearing
     };
     const updatedIcon = createVehicleIcon(playbackVehicle, map.getZoom());
     routeMarker.setIcon(updatedIcon);
-    
+
     updatePlaybackUI();
 }
 
@@ -911,6 +1005,64 @@ function filterGeofences() {
         });
 }
 
+// ============== BUILDING LABELS ==============
+async function loadBuildings() {
+    try {
+        const response = await fetch('/static/data/buildings.json');
+        buildingsData = await response.json();
+        updateBuildingLabels();
+    } catch (error) {
+        console.error('Failed to load buildings:', error);
+    }
+}
+
+function createBuildingLabel(building) {
+    // Create transparent marker at building location
+    const marker = L.marker([building.latitude, building.longitude], {
+        icon: L.divIcon({
+            className: 'building-label-marker',
+            html: '',  // Transparent marker
+            iconSize: [0, 0]
+        }),
+        interactive: false  // Labels are non-interactive
+    });
+
+    // Add permanent tooltip with building ID
+    marker.bindTooltip(building.id, {
+        permanent: true,
+        direction: 'center',
+        className: 'building-label-tooltip',
+        offset: [0, 0]
+    });
+
+    return marker;
+}
+
+function updateBuildingLabels() {
+    const currentZoom = map.getZoom();
+    
+    if (currentZoom >= 11) {
+        // Show building labels at zoom 11+
+        buildingsData.buildings?.forEach(building => {
+            if (!building.latitude || !building.longitude) return;
+
+            if (!buildingLabels[building.id]) {
+                // Create new label if it doesn't exist
+                const label = createBuildingLabel(building);
+                buildingLabels[building.id] = label;
+                label.addTo(map);
+            }
+        });
+    } else {
+        // Hide building labels below zoom 11
+        Object.values(buildingLabels).forEach(label => {
+            map.removeLayer(label);
+        });
+        buildingLabels = {};
+    }
+}
+
+
 // ============== OVERVIEW STATS ==============
 async function loadOverviewStats() {
     try {
@@ -925,6 +1077,7 @@ async function loadOverviewStats() {
         document.getElementById('stat-available').textContent = available;
     } catch (error) {
         console.error('Failed to load overview stats:', error);
+    
     }
 }
 
